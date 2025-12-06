@@ -39,7 +39,7 @@ def compute_iou_matrix(boxes1: np.array, boxes2: np.array):
     return iou_matrix
 
 
-# 示例使用
+# 测试代码
 if __name__ == "__main__":
     # 创建两个包含多个边界框的集合
     boxes_a = np.array([
