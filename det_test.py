@@ -67,10 +67,10 @@ if __name__ == '__main__':
 
     # # 测试图片
     # img_path = "data/bus.jpg"
-    # save_img_path = "data/bus_detect.jpg"
+    # save_img_path = "output/bus_detect.jpg"
     # test_img(yolo11,img_path, save_img_path)
 
     # 测试视频
     video_path = "data/pedestrian_1.mp4"
-    save_video_path = "data/pedestrian_1_detect.mp4"
+    save_video_path = "output/pedestrian_1_detect.mp4"
     test_video(yolo11, video_path, save_video_path)
