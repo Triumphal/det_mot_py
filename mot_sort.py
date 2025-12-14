@@ -4,7 +4,7 @@ import numpy as np
 from typing import List
 from scipy.optimize import linear_sum_assignment
 import cv2
-from yolo11_onnx import YOLOv11
+from det.yolo11_infer import YOLOv11
 import os
 import lap
 from utils.bbox import compute_iou_matrix
@@ -41,44 +41,53 @@ class KalmanBoxTracker:
 
     def __init__(self, bbox):
         """
-        使用初始边界框初始化跟踪器
+        初始化卡尔曼滤波器
+        Args:
+            bbox : [x, y, w, h] (中心坐标和宽高)
         """
         self.kf = None
         self.kf_param_initial(bbox)  # 初始化kf参数
+
         self.time_since_update = 0
         self.id = KalmanBoxTracker.count
         KalmanBoxTracker.count += 1
-        self.history = []
-        self.hits = 0
+        self.history = [] # 历史状态
+        self.hits = 0 # 命中次数
         self.hit_streak = 0
         self.age = 0
 
     def kf_param_initial(self, bbox):
-        self.kf = KalmanFilter(dim_x=7, dim_z=4)
-        # 设置状态转移矩阵F x_k =  F * x_{k-1} + w_{k-1} w~N(0, Q)
+        self.kf = KalmanFilter(dim_x=8, dim_z=4)
+        # 状态转移矩阵F_8x8 (x, y, s, r, dx, dy, ds, dr) x_k =  F * x_{k-1} + w_{k-1} w~N(0, Q)
+        # x,y: 中心点坐标; s: 面积; r: 宽高比; d开头: 对应速度
         self.kf.F = np.array([
-            [1, 0, 0, 0, 1, 0, 0],
-            [0, 1, 0, 0, 0, 1, 0],
-            [0, 0, 1, 0, 0, 0, 1],
-            [0, 0, 0, 1, 0, 0, 0],
-            [0, 0, 0, 0, 1, 0, 0],
-            [0, 0, 0, 0, 0, 1, 0],
-            [0, 0, 0, 0, 0, 0, 1]])
-        # 设置过程噪声协方差矩阵Q
-        self.kf.Q[-1, -1] *= 0.01
-        self.kf.Q[4:, 4:] *= 0.01
-        # 设置观测矩阵H y_k = H * x_k + v_k v~N(0, R)
+            [1, 0, 0, 0, 1, 0, 0, 0],
+            [0, 1, 0, 0, 0, 1, 0, 0],
+            [0, 0, 1, 0, 0, 0, 1, 0],
+            [0, 0, 0, 1, 0, 0, 0, 1],
+            [0, 0, 0, 0, 1, 0, 0, 0],
+            [0, 0, 0, 0, 0, 1, 0, 0],
+            [0, 0, 0, 0, 0, 0, 1, 0],
+            [0, 0, 0, 0, 0, 0, 0, 1]])
+        
+        # 设置观测矩阵H z_k = H * x_k + v_k v~N(0, R)
         self.kf.H = np.array([
             [1, 0, 0, 0, 0, 0, 0],
             [0, 1, 0, 0, 0, 0, 0],
             [0, 0, 1, 0, 0, 0, 0],
             [0, 0, 0, 1, 0, 0, 0]])
+        # 设置过程噪声协方差矩阵Q
+        self.kf.Q[-1, -1] *= 0.01
+        self.kf.Q[4:, 4:] *= 0.01
+        
         # 设置观测噪声协方差矩阵R
         self.kf.R[2:, 2:] *= 10.0
+
         # 后验估计的状态估计误差的协方差矩阵P
-        self.kf.P[4:, 4:] *= 1000.0  # give high uncertainty to the unobservable initial velocities
+        self.kf.P[4:, 4:] *= 1000.0  # 速度初始不确定性大
         self.kf.P *= 10.0
-        # 设置初始状态 x_k = [x, y, s, r, vx=0, vy=0, vr=0]
+
+        # 设置初始状态 x_k = [x, y, s, r, dx=0, dy=0, ds=0, dr=0]
         self.kf.x[:4] = convert_bbox_to_x(bbox)
 
     def update(self, bbox):

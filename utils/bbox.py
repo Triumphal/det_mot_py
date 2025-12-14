@@ -29,12 +29,16 @@ def compute_iou_matrix(boxes1: np.array, boxes2: np.array):
     yy1 = np.maximum(boxes1[..., 1], boxes2[..., 1])
     xx2 = np.minimum(boxes1[..., 2], boxes2[..., 2])
     yy2 = np.minimum(boxes1[..., 3], boxes2[..., 3])
+
+    # 计算两个框的面积
+    area1 = (boxes1[..., 2] - boxes1[..., 0]) * (boxes1[..., 3] - boxes1[..., 1]) # 第一个集合的框的面积
+    area2 = (boxes2[..., 2] - boxes2[..., 0]) * (boxes2[..., 3] - boxes2[..., 1]) # 第二个集合的框的面积
+
+    # 重叠区域的面积
     w = np.maximum(0.0, xx2 - xx1)
     h = np.maximum(0.0, yy2 - yy1)
     overlap_area = w * h
-    union_area = (boxes1[..., 2] - boxes1[..., 0]) * (boxes1[..., 3] - boxes1[..., 1]) + \
-                 (boxes2[..., 2] - boxes2[..., 0]) * (boxes2[..., 3] - boxes2[..., 1]) - \
-                 overlap_area
+    union_area = area1 + area2 - overlap_area
     iou_matrix = overlap_area / union_area
     return iou_matrix
 

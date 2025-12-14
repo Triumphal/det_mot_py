@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 """
-@Date     : 2025/12/6 18:08 
-@Author   : ArcRay 
+@Date     : 2025/12/6 18:08
+@Author   : ArcRay
 @FileName : det_test.py
 @Brief    : 检测测试
 """
@@ -44,9 +44,12 @@ def test_video(model: YOLOv11, video_path, save_path):
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     frame_counts = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     print(f"video fps:{fps},width:{frame_width},height:{frame_height} frame_counts:{frame_counts}")
-    fourcc = cv2.VideoWriter_fourcc(*'avc1')  # MP4格式的H.264
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v") 
     os.makedirs(Path(save_path).parent, exist_ok=True)
     out = cv2.VideoWriter(save_path, fourcc, fps, (frame_width, frame_height))
+    if not out.isOpened():
+        print("Error: VideoWriter not opened")
+        return
 
     # 初始化tqdm进度条
     pbar = tqdm(total=frame_counts, desc="Processing Frames", unit="frame")
@@ -60,7 +63,7 @@ def test_video(model: YOLOv11, video_path, save_path):
         pbar.update(1)  # 更新进度条
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     model_path = "model/yolo11n.onnx"
     yaml_path = "model/coco8.yaml"
     yolo11 = YOLOv11(model_path, yaml_path)
