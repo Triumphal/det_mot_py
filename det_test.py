@@ -13,6 +13,8 @@ import logging
 from pathlib import Path
 import os
 from tqdm import tqdm
+import supervision as sv
+import numpy as np
 
 
 def test_img(model: YOLOv11, image_path, save_path):
@@ -44,7 +46,7 @@ def test_video(model: YOLOv11, video_path, save_path):
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     frame_counts = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     print(f"video fps:{fps},width:{frame_width},height:{frame_height} frame_counts:{frame_counts}")
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v") 
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     os.makedirs(Path(save_path).parent, exist_ok=True)
     out = cv2.VideoWriter(save_path, fourcc, fps, (frame_width, frame_height))
     if not out.isOpened():
@@ -62,6 +64,43 @@ def test_video(model: YOLOv11, video_path, save_path):
         out.write(frame_boxes)
         pbar.update(1)  # 更新进度条
 
+def test_image_with_sv(model: YOLOv11, image_path, save_path):
+    image = cv2.imread(image_path)
+    results, _ = model.infer_one_img(image, conf_thr=0.1, iou_thr=0.2)  # 推理图片
+    detections = model.get_sv_result(results)
+
+    box_annotator = sv.BoxAnnotator()
+    label_annotator = sv.LabelAnnotator()
+    labels = [
+        f"{model.classes_name[class_id]} {confidence:.2f}" 
+        for class_id, confidence in zip(detections.class_id, detections.confidence)
+    ]
+    annotated_image = image.copy()
+    annotated_image = box_annotator.annotate(annotated_image, detections=detections)
+    annotated_image = label_annotator.annotate(annotated_image, detections=detections,labels = labels)
+
+    cv2.imwrite(save_path, annotated_image)
+
+
+def test_video_with_sv(model: YOLOv11, video_path, save_path):
+
+    box_annotator = sv.BoxAnnotator()
+    label_annotator = sv.LabelAnnotator()
+
+    def det_callback(frame: np.ndarray, index: int):
+        results, _ = model.infer_one_img(frame, conf_thr=0.1, iou_thr=0.2)  # 推理图片
+        detections = model.get_sv_result(results)
+        labels = [
+            f"{model.classes_name[class_id]} {confidence:.2f}"
+            for class_id, confidence in zip(detections.class_id, detections.confidence)
+        ]
+        # 标注
+        annotated_frame = box_annotator.annotate(frame, detections)
+        annotated_frame = label_annotator.annotate(annotated_frame, detections, labels)
+        return annotated_frame
+
+    sv.process_video(source_path=video_path, target_path=save_path, callback=det_callback, show_progress=True)
+
 
 if __name__ == "__main__":
     model_path = "model/yolo11n.onnx"
@@ -69,11 +108,13 @@ if __name__ == "__main__":
     yolo11 = YOLOv11(model_path, yaml_path)
 
     # # 测试图片
-    # img_path = "data/bus.jpg"
-    # save_img_path = "output/bus_detect.jpg"
+    img_path = "data/bus.jpg"
+    save_img_path = "output/bus_detect.jpg"
     # test_img(yolo11,img_path, save_img_path)
+    test_image_with_sv(yolo11,img_path, save_img_path)
 
     # 测试视频
-    video_path = "data/pedestrian_1.mp4"
-    save_video_path = "output/pedestrian_1_detect.mp4"
-    test_video(yolo11, video_path, save_video_path)
+    # video_path = "data/pedestrian_1.mp4"
+    # save_video_path = "output/pedestrian_1_detect.mp4"
+    # # test_video(yolo11, video_path, save_video_path)
+    # test_video_with_sv(yolo11, video_path, save_video_path)

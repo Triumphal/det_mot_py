@@ -1,11 +1,10 @@
 from typing import List, Set, Sequence
 import numpy as np
 from mot.sort.kalman_box_tracker import SORTKalmanBoxTracker
-from mot.utils import get_iou_matrix
+from utils.utils import get_iou_matrix
 import supervision as sv
 from copy import deepcopy
 import lap
-
 
 class SORTTracker:
     """Implements SORT (Simple Online and Realtime Tracking).
@@ -29,8 +28,7 @@ class SORTTracker:
         minimum_iou_threshold (float): 将检测结果与现有轨迹关联的 IOU 阈值。
     """
 
-    def __init__(
-        self,
+    def __init__(self,
         lost_track_buffer: int = 30,
         frame_rate: float = 30.0,
         track_activation_threshold: float = 0.25,
@@ -78,29 +76,26 @@ class SORTTracker:
         iou_matrix = get_iou_matrix(detection_boxes, predicted_boxes)
 
         # 根据 IOU 将检测框与跟踪器进行匹配
-        matched_indices, _, unmatched_detections = self._get_associated_indices(iou_matrix, detection_boxes)
+        matched_indices, _, unmatched_detections = self.associate_detections_to_trackers(iou_matrix,detections)
 
         # 使用指定的检测框更新匹配上的跟踪器
         for row, col in matched_indices:
-            self.trackers[row].update(detection_boxes[col])
+            self.trackers[col].update(detection_boxes[row])
 
         # 将没有匹配上的检测框生成新的检测器
-        self._spawn_new_trackers(detections, detection_boxes, unmatched_detections)
+        self.spawn_new_trackers(detections, detection_boxes, unmatched_detections)
 
         # 移除已经"dead"的跟踪器
         self.trackers = self.get_alive_trackers()
 
-        # 获取更新后的检测结果，就是指定了跟踪的id
-        updated_detections = self.update_detections_with_track_ids(
-            detections,
-            detection_boxes,
-            self.minimum_iou_threshold,
-            self.minimum_consecutive_frames,
-        )
+        # 将跟踪器中的满足条件的轨迹输出
+        updated_detections = self.update_detections_with_track_ids()
 
         return updated_detections
 
-    def _get_associated_indices(self, iou_matrix: np.ndarray) -> tuple[list[tuple[int, int]], set[int], set[int]]:
+    def associate_detections_to_trackers(
+        self, iou_matrix: np.ndarray,detections:sv.Detections
+    ) -> tuple[list[tuple[int, int]], set[int], set[int]]:
         """
         基于IOU的跟踪和检测器关联
 
@@ -111,7 +106,7 @@ class SORTTracker:
             tuple[list[tuple[int, int]], set[int], set[int]]: Matched indices,
                 unmatched trackers, unmatched detections.
         """
-        detection_nums, tracker_nums = iou_matrix.shape  # 行表示检测框数，列表示预测框数
+        detection_nums, tracker_nums = len(detections),len(self.trackers)  # 行表示检测框数，列表示预测框数
         matched_indices = []
         unmatched_trackers = set(range(tracker_nums))
         unmatched_detections = set(range(detection_nums))
@@ -129,18 +124,16 @@ class SORTTracker:
 
         return matched_indices, unmatched_trackers, unmatched_detections
 
-    def _spawn_new_trackers(
-        self,
-        detections: sv.Detections,
-        detection_boxes: np.ndarray,
-        unmatched_detections: set[int],
+    def spawn_new_trackers(
+        self, detections: sv.Detections, detection_boxes: np.ndarray, unmatched_detections: set[int]
     ) -> None:
         """
-        仅当检测结果的置信度高于阈值时，才创建新的跟踪器。
+        仅当检测结果的置信度高于阈值时，创建新的跟踪器。
 
         Args:
             detections (sv.Detections): The latest set of object detections.
             detection_boxes (np.ndarray): Detected bounding boxes in the form [x1, y1, x2, y2].
+            unmatched_detections (np.ndarry): unmatched detections index list from detections
         """
         for detection_idx in unmatched_detections:
             if (
@@ -148,7 +141,7 @@ class SORTTracker:
                 or detection_idx >= len(detections.confidence)
                 or detections.confidence[detection_idx] >= self.track_activation_threshold
             ):
-                new_tracker = SORTKalmanBoxTracker(detection_boxes[detection_idx])
+                new_tracker = SORTKalmanBoxTracker(detection_boxes[detection_idx],detections.class_id[detection_idx])
                 self.trackers.append(new_tracker)
 
     def get_alive_trackers(self) -> List[SORTKalmanBoxTracker]:
@@ -166,59 +159,31 @@ class SORTTracker:
             if tracker.time_since_update < self.maximum_frames_without_update and (is_mature or is_active):
                 alive_trackers.append(tracker)
         return alive_trackers
-    
-    def update_detections_with_track_ids(self, detections: sv.Detections, detection_boxes: np.ndarray) -> sv.Detections:
-        """
-        该函数会准备带有跟踪 ID 的更新后的检测结果。如果跟踪器“成熟”（>= `minimum_consecutive_frames`）
-        或最近更新过，则会为其分配一个 ID，该 ID 指向刚刚更新它的检测结果。
 
-        Args:
-            detections (sv.Detections): The latest set of object detections.
-            detection_boxes (np.ndarray): Detected bounding boxes in the form [x1, y1, x2, y2].
+    def update_detections_with_track_ids(self) -> sv.Detections:
+        """
+        输出带有跟踪 ID 的更新后的检测结果。如果跟踪器“成熟”(>= `minimum_consecutive_frames`)
+        或最近更新过，则会为其分配一个 ID, 该 ID 指向刚刚更新它的检测结果。
 
         Returns:
             sv.Detections: A copy of the detections with `tracker_id` set for each detection that is tracked.
         """
-        # Re-run association in the same way (could also store direct mapping)
-        # 以相同方式重新运行关联（也可以存储直接映射）
-        final_tracker_ids = [-1] * len(detection_boxes)
-
-        # 移除部分跟踪器后，根据当前跟踪器重新计算预测框。
-        predicted_boxes = np.array([t.get_state_bbox() for t in self.trackers])
-        iou_matrix_final = np.zeros((len(detection_boxes)), len(self.trackers), dtype=np.float32)
-
-        # 在进行第二次 IOU 计算之前，请确保 predicted_boxes 的形状正确。
-        if len(predicted_boxes) == 0 and len(self.trackers) > 0:
-            predicted_boxes = np.zeros((len(self.trackers), 4), dtype=np.float32)
-
-        if len(self.trackers) > 0 and len(detection_boxes) > 0:
-            iou_matrix_final = sv.box_iou_batch(predicted_boxes, detection_boxes)
-
-        row_indices, col_indices = np.where(iou_matrix_final > self.minimum_iou_threshold)
-        sorted_pairs = sorted(
-            zip(row_indices, col_indices),
-            key=lambda x: iou_matrix_final[x[0], x[1]],
-            reverse=True,
+        xyxy = []
+        tracker_id = []
+        class_id = []
+        for tracker in self.trackers:
+            if tracker.number_of_successful_updates >= self.minimum_consecutive_frames:
+                # 如果跟踪器已经成熟，但是id是-1，指定一个新的id
+                if tracker.tracker_id == -1:
+                    tracker.tracker_id = SORTKalmanBoxTracker.get_next_tracker_id()
+            xyxy.append(tracker.get_state_bbox())
+            tracker_id.append(tracker.tracker_id)
+            class_id.append(tracker.class_id)
+        updated_detections= sv.Detections(
+            xyxy=np.array(xyxy).astype(int),
+            tracker_id=np.array(tracker_id).astype(int),
+            class_id=np.array(class_id).astype(int)
         )
-        used_rows: Set[int] = set()
-        used_cols: Set[int] = set()
-        for row, col in sorted_pairs:
-            # Double check index is in range
-            if row < len(self.trackers):
-                tracker_obj = self.trackers[int(row)]
-                # Only assign if the track is "mature" or is new but has enough hits
-                if (int(row) not in used_rows) and (int(col) not in used_cols):
-                    if tracker_obj.number_of_successful_updates >= self.minimum_consecutive_frames:
-                        # If tracker is mature but still has ID -1, assign a new ID
-                        if tracker_obj.tracker_id == -1:
-                            tracker_obj.tracker_id = SORTKalmanBoxTracker.get_next_tracker_id()
-                        final_tracker_ids[int(col)] = tracker_obj.tracker_id
-                    used_rows.add(int(row))
-                    used_cols.add(int(col))
-
-        # Assign tracker IDs to the returned Detections
-        updated_detections = deepcopy(detections)
-        updated_detections.tracker_id = np.array(final_tracker_ids)
 
         return updated_detections
 

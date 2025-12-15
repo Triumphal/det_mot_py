@@ -10,12 +10,14 @@
 import cv2
 import numpy as np
 import onnxruntime as ort
-from utils.common import get_class
-from utils.decorators import cost_time
+from utils.utils import get_class
+from utils.utils import cost_time
 from typing import List, Tuple
 from dataclasses import dataclass
+import supervision as sv # 使用里面的记过封装，便于可视化
 import logging
 import os
+from utils.utils import x1y1wh2xyxy
 
 
 @dataclass
@@ -68,9 +70,12 @@ class YOLOv11:
         self.img_width = None
         self.img_height = None
 
+        ## 后处理的结果
+        self.result = []
+
         ## 可视化
-        self.classes = get_class(yaml_file)["names"]
-        self.color_palette = np.random.uniform(0, 255, size=(len(self.classes), 3))  # 框颜色
+        self.classes_name = get_class(yaml_file)["names"]
+        self.color_palette = np.random.uniform(0, 255, size=(len(self.classes_name), 3))  # 框颜色
 
         self.init_model_cost = self.init_onnx_model(infer_type)
         logging.info(f"Init  cost: {self.init_model_cost[-1]:.2f} ms")
@@ -166,7 +171,7 @@ class YOLOv11:
             conf_thr : 置信度阈值
             iou_thr: iou阈值
         Return:
-            result: 后处理之后的结果，[[[x1, y1, w, h],score,class_id],...]
+            result: 后处理之后的结果，[[x1, y1, w, h, score, class_id],...]
         """
         self.set_config(conf_thr, iou_thr)  # 设置配置，否者使用默认，conf_thr=0.3  iou_thr=0.3
 
@@ -198,8 +203,12 @@ class YOLOv11:
         indices = cv2.dnn.NMSBoxes(bboxes, scores, self.conf_thr, self.iou_thr)  # bboxes 是左上点和宽高的格式
         result = []
         for i in indices:
-            result.append([bboxes[i], scores[i], class_ids[i]])
-        return result
+            result.append([bboxes[i][0],bboxes[i][1],bboxes[i][2],bboxes[i][3],scores[i], class_ids[i]])
+        return np.array(result).astype(np.float32)
+
+    def get_sv_result(self,result:np.ndarray):
+        xyxy_result = x1y1wh2xyxy(result)
+        return sv.Detections(xyxy=xyxy_result[:, :4].astype(int), confidence=xyxy_result[:, 4], class_id=xyxy_result[:, 5].astype(int))
 
     def add_detected_box(self, img, results):
         """
@@ -213,7 +222,7 @@ class YOLOv11:
             class_id = result[2]
             color = self.color_palette[class_id]
             cv2.rectangle(img, (int(x1), int(y1)), (int(x1 + w), int(y1 + h)), color, 2)
-            label = f"{self.classes[class_id]}:{score:.2f}"
+            label = f"{self.classes_name[class_id]}:{score:.2f}"
             (label_w, label_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
             label_x, label_y = int(x1), (int(y1) - 10 if int(y1) - 10 > label_h else int(y1) + 10)
             cv2.rectangle(img, (label_x, label_y - label_h), (label_x + label_w, label_y + label_h), color, cv2.FILLED)

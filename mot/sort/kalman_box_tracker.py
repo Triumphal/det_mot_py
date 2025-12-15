@@ -37,9 +37,12 @@ class SORTKalmanBoxTracker:
         cls.count_id += 1
         return next_id
 
-    def __init__(self, bbox: NDArray[np.float64]) -> None:
+    def __init__(self, bbox: NDArray[np.float64],class_id:int) -> None:
         # 初始id设置为 -1 ，当跟踪被认为成熟时将被分配一个正式的id
         self.tracker_id = -1
+
+        # 跟踪的目标的类别id,在传入bbox的同时传入
+        self.class_id = class_id
 
         # 命中次数：表示目标被成功更新的次数
         self.number_of_successful_updates = 1
@@ -48,7 +51,7 @@ class SORTKalmanBoxTracker:
 
         # (x, y, s, r, vx, vy, vs, vr).
         # x,y: 中心点坐标; s: 面积; r: 宽高比; v: 对应速度
-        # We'll store the bounding box in "self.state"
+        # We'll store the bounding box in "self.state" 这里需要注意维度 8x1
         self.state = np.zeros((8, 1), dtype=np.float32)
 
         # 使用第一个检测结果初始化状态self.state
@@ -140,16 +143,18 @@ class SORTKalmanBoxTracker:
 
     def get_state_bbox(self) -> NDArray[np.float32]:
         """
-        从状态矩阵中返回当前的框
+        从状态变量中返回当前的框
         Returns the current bounding box estimate from the state vector.
 
         Returns:
             np.ndarray: The bounding box [x1, y1, x2, y2]
         """
         state = self.state[:4, 0].flatten().astype(np.float32)
+        if state[2] < 0 or state[3]<0: # 当预测的框不符合物理规律时，即出现了负值
+            return np.array([0, 0, 0, 0]).astype(int)
         w = np.sqrt(state[2] * state[3])
         h = np.sqrt(state[2] / state[3])
 
         x1, y1, x2, y2 = state[0] - w / 2, state[1] - h / 2, state[0] + w / 2, state[1] + h / 2
 
-        return np.array([x1, y1, x2, y2]).astype(np.float32)
+        return np.array([x1, y1, x2, y2]).astype(int)
